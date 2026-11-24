@@ -18,7 +18,8 @@ transform = transforms.Compose([
 dataset = datasets.ImageFolder(data_dir, transform=transform)
 train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-model = models.mobilenet_v2(pretrained=True)
+# Using weights=models.MobileNet_V2_Weights.DEFAULT for newer PyTorch versions
+model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
 num_classes = len(dataset.classes)
 model.classifier[1] = nn.Linear(model.last_channel, num_classes)
 
@@ -44,5 +45,5 @@ for epoch in range(num_epochs):
     
     print(f"Epoch [{epoch+1}/{num_epochs}], Loss: {running_loss/len(train_loader):.4f}")
 
-torch.save(model, 'model.pth')
-print("Model saved successfully as model.pth")
+torch.save(model.state_dict(), 'model.pth')
+print("Model state_dict saved successfully as model.pth")
