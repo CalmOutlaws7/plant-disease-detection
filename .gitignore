@@ -1,0 +1,4 @@
+dataset/
+model.pth
+__pycache__/
+.streamlit/
