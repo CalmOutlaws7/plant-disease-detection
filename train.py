@@ -18,7 +18,6 @@ transform = transforms.Compose([
 dataset = datasets.ImageFolder(data_dir, transform=transform)
 train_loader = DataLoader(dataset, batch_size=batch_size, shuffle=True)
 
-# Using weights=models.MobileNet_V2_Weights.DEFAULT for newer PyTorch versions
 model = models.mobilenet_v2(weights=models.MobileNet_V2_Weights.DEFAULT)
 num_classes = len(dataset.classes)
 model.classifier[1] = nn.Linear(model.last_channel, num_classes)

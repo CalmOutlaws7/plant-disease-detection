@@ -1,19 +1,20 @@
 import streamlit as st
 import torch
+import torchvision.models as models
 import torchvision.transforms as transforms
 from PIL import Image
 
-CLASSES = [
-    'Drumstick Healthy', 'Drumstick Diseased',
-    'Jasmine Healthy', 'Jasmine Diseased',
-    'Mango Healthy', 'Mango Diseased',
-    'Mint Healthy', 'Mint Diseased',
-    'Roxburgh Fig Healthy', 'Roxburgh Fig Diseased'
-]
+CLASSES = ['Drumstick Diseased', 'Drumstick Healthy','Jasmine Diseased', 'Jasmine Healthy','Mango Diseased', 'Mango Healthy','Mint Diseased', 'Mint Healthy',
+    'Roxburgh Fig Diseased', 'Roxburgh Fig Healthy']
+
+TREATMENTS = {'Drumstick Diseased': 'Apply neem oil spray and ensure proper soil drainage.','Jasmine Diseased': 'Remove infected leaves and apply organic fungicide.','Mango Diseased': 'Use copper-based fungicide and prune affected branches.',
+    'Mint Diseased': 'Improve air circulation and avoid overwatering.','Roxburgh Fig Diseased': 'Clear fallen debris and apply bio-pesticide.'}
 
 @st.cache_resource
 def load_model():
-    model = torch.load('model.pth', map_location='cpu')
+    model = models.mobilenet_v2(weights=None)
+    model.classifier[1] = torch.nn.Linear(model.last_channel, len(CLASSES))
+    model.load_state_dict(torch.load('model.pth', map_location='torch.device("cpu")'))
     model.eval()
     return model
 
@@ -24,7 +25,7 @@ except Exception as e:
     model_loaded = False
 
 st.title("Plant Disease Detection System")
-st.write("A deep learning application for classifying plant leaf health and diseases.")
+st.write("A deep learning web application for classifying plant leaf health and viewing remediation steps.")
 
 uploaded_file = st.file_uploader("Upload a leaf image", type=["jpg", "jpeg", "png"])
 
@@ -41,13 +42,26 @@ if uploaded_file is not None:
         
         input_tensor = transform(image).unsqueeze(0)
         
-        if st.button('Predict Disease'):
+        if st.button('Analyze Image'):
             with torch.no_grad():
                 outputs = model(input_tensor)
                 probabilities = torch.nn.functional.softmax(outputs[0], dim=0)
-                confidence, predicted_idx = torch.max(probabilities, 0)
+                top_prob, top_cat = torch.topk(probabilities, 3)
                 
-            st.write(f"Prediction: Class {predicted_idx.item()}")
-            st.write(f"Confidence: {confidence.item() * 100:.2f}%")
+            st.subheader("Top Predictions")
+            for i in range(3):
+                class_name = CLASSES[top_cat[i].item()]
+                score = top_prob[i].item() * 100
+                st.write(f"{i+1}. {class_name}: {score:.2f}%")
+            
+            primary_prediction = CLASSES[top_cat[0].item()]
+            st.markdown("---")
+            st.subheader("Recommendation")
+            
+            if "Diseased" in primary_prediction:
+                treatment = TREATMENTS.get(primary_prediction, 'Apply standard organic pest control and isolate plant.')
+                st.warning(f"Status: Diseased\n\nRecommended Action: {treatment}")
+            else:
+                st.success("Status: Healthy\n\nNo treatment required. Maintain standard plant care routine.")
     else:
-        st.error("Model file could not be loaded.")
+        st.error("Model file could not be loaded. Please ensure model.pth is present.")
