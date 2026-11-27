@@ -89,11 +89,11 @@ pred_class, top_conf = results[0]
 treatment = get_treatment(pred_class)
 
 with st.container(border=True):
-    c1, c2, c3, c4 = st.columns(4)
-    c1.metric("Prediction", pred_class)
-    c2.metric("Confidence", f"{top_conf:.2f}%")
-    c3.metric("Latency", f"{latency_ms:.1f} ms")
-    c4.metric("Severity", treatment["severity"])
+    c1, c2, c3 = st.columns([2, 1, 1])
+    c1.markdown(f"**Prediction:** {pred_class}")
+    c2.markdown(f"**Confidence:** {top_conf:.2f}%")
+    c3.markdown(f"**Latency:** {latency_ms:.1f} ms")
+    st.markdown(f"**Severity:** {treatment['severity']}")
     if "healthy" not in pred_class.lower() and top_conf < LOW_CONFIDENCE_THRESHOLD:
         st.warning("Low confidence prediction.")
 
