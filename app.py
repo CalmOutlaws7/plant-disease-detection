@@ -4,114 +4,94 @@ from pathlib import Path
 from PIL import Image
 from torchvision import models, transforms
 
-MODEL_PATH, SAMPLES_DIR, IMG_SIZE, LOW_CONFIDENCE_THRESHOLD = Path("plant_disease_model.pth"), Path("samples"), 224, 60.0
+MODEL_PATH, SAMPLES_DIR, IMG_SIZE = Path("plant_disease_model.pth"), Path("samples"), 224
 DEVICE = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 TEAM = ["Monish M (1BM24AI090)", "Mohammed Fahim (1BM24AI088)", "Prajwal C V (1BM24AI113)"]
 GUIDE = "Prof. Shridevi A Desai"
 
-TREATMENTS = {
-    "healthy": {"severity": "None", "about": "No visible disease symptoms detected.", "chemical": ["No chemical treatment required."], "organic": ["Continue routine care."], "prevention": ["Water at base.", "Maintain airflow.", "Weekly inspection."]},
-    "anthracnose": {"severity": "Moderate to High", "about": "Fungal disease causing dark, sunken lesions.", "chemical": ["Spray copper oxychloride (0.3%) or mancozeb (0.25%).", "Carbendazim (0.1%)."], "organic": ["Neem oil spray (3-5 ml/L).", "Remove infected leaves."], "prevention": ["Prune canopy.", "Keep foliage dry."]},
-    "powdery mildew": {"severity": "Moderate", "about": "White powdery coating on leaves.", "chemical": ["Wettable sulphur (0.2-0.3%).", "Hexaconazole (0.1%)."], "organic": ["Baking soda solution.", "Neem oil spray."], "prevention": ["Full sun.", "Avoid excess nitrogen."]},
-    "leaf spot": {"severity": "Low to Moderate", "about": "Fungal/bacterial spots with yellow halos.", "chemical": ["Copper-based fungicide.", "Mancozeb (0.25%)."], "organic": ["Neem oil or garlic extract."], "prevention": ["Drip watering.", "Disinfect tools."]}
-}
-GENERIC_TREATMENT = {"severity": "Unknown", "about": "Detailed guidance logged in system.", "chemical": ["Consult local agricultural officer."], "organic": ["Neem oil spray."], "prevention": ["Keep foliage dry."]}
-
 PREPROCESS = transforms.Compose([transforms.Resize((IMG_SIZE, IMG_SIZE)), transforms.ToTensor(), transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])])
-st.set_page_config(page_title="Plant Disease Detector", layout="wide")
+st.set_page_config(page_title="Leaf Pathology Classifier", layout="wide")
 
-@st.cache_resource(show_spinner="Loading model...")
+st.markdown("""<style>
+.stApp { background-color: #0b0f19; color: #f3f4f6; font-family: -apple-system, BlinkMacSystemFont, "SF Pro Display", sans-serif; }
+#MainMenu, footer { visibility: hidden; }
+.glass { background: rgba(255,255,255,0.03); backdrop-filter: blur(20px); border: 1px solid rgba(255,255,255,0.08); border-radius: 14px; padding: 20px; margin-bottom: 16px; box-shadow: 0 8px 32px rgba(0,0,0,0.37); }
+.stButton>button { background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.1); color: #f3f4f6; border-radius: 8px; }
+.stButton>button:hover { background: rgba(255,255,255,0.12); border-color: rgba(255,255,255,0.2); }
+</style>""", unsafe_allow_html=True)
+
+@st.cache_resource(show_spinner=False)
 def load_model():
     if not MODEL_PATH.exists(): raise FileNotFoundError("Model missing")
-    checkpoint = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
-    class_names = checkpoint['classes']
-    model = models.mobilenet_v2(weights=None)
-    model.classifier[1] = nn.Linear(model.last_channel, len(class_names))
-    model.load_state_dict(checkpoint['model_state'])
-    return model.to(DEVICE).eval(), class_names
+    ckpt = torch.load(MODEL_PATH, map_location=DEVICE, weights_only=False)
+    classes = ckpt['classes']
+    m = models.mobilenet_v2(weights=None)
+    m.classifier[1] = nn.Linear(m.last_channel, len(classes))
+    m.load_state_dict(ckpt['model_state'])
+    return m.to(DEVICE).eval(), classes
 
 try:
     model, CLASS_NAMES = load_model()
     model_loaded, load_error = True, None
 except Exception as e:
-    model_loaded, load_error = False, e
-    CLASS_NAMES = []
+    model_loaded, load_error, CLASS_NAMES = False, e, []
 
-def predict(model, image, k=3):
-    tensor = PREPROCESS(image.convert("RGB")).unsqueeze(0).to(DEVICE)
-    with torch.no_grad(): probs = torch.softmax(model(tensor), dim=1)[0]
+def run_inference(img, k=5):
+    x = PREPROCESS(img.convert("RGB")).unsqueeze(0).to(DEVICE)
+    if DEVICE.type == "cuda": torch.cuda.synchronize()
+    t0 = time.perf_counter()
+    with torch.no_grad():
+        logits = model(x)
+        probs = torch.softmax(logits, dim=1)[0]
+    if DEVICE.type == "cuda": torch.cuda.synchronize()
+    ms = (time.perf_counter() - t0) * 1000
     top_p, top_i = torch.topk(probs, k=min(k, len(CLASS_NAMES)))
-    return [(CLASS_NAMES[i], p * 100) for p, i in zip(top_p.tolist(), top_i.tolist())]
-
-def timed_predict(model, image, k=3):
-    if DEVICE.type == "cuda": torch.cuda.synchronize()
-    start = time.perf_counter()
-    results = predict(model, image, k)
-    if DEVICE.type == "cuda": torch.cuda.synchronize()
-    return results, (time.perf_counter() - start) * 1000
-
-def get_treatment(d):
-    key = d.lower().strip()
-    if key in TREATMENTS: return TREATMENTS[key]
-    for name, info in TREATMENTS.items():
-        if name in key: return info
-    return GENERIC_TREATMENT
+    return [(CLASS_NAMES[i], float(p * 100), float(logits[0, i])) for p, i in zip(top_p, top_i)], ms
 
 with st.sidebar:
-    st.subheader("Model")
-    st.markdown(f"**Architecture:** MobileNetV2\n**Resolution:** {IMG_SIZE}x{IMG_SIZE}\n**Classes:** {len(CLASS_NAMES) if model_loaded else 26}")
+    st.markdown("### Spec")
+    st.text(f"Model: MobileNetV2\nDevice: {DEVICE.type.upper()}\nClasses: {len(CLASS_NAMES)}")
     st.divider()
-    st.subheader("Team")
-    for m in TEAM: st.markdown(f"- {m}")
-    st.caption(f"Guide: {GUIDE}")
+    st.markdown("### Team")
+    st.text("\n".join(TEAM) + f"\n\nGuide: {GUIDE}")
 
-st.title("Plant Disease Detection")
-if not model_loaded:
-    st.error(f"Failed to load model: {load_error}")
-    st.stop()
+st.markdown("## Leaf Pathology Inference")
+if not model_loaded: st.error(f"Error: {load_error}"); st.stop()
 
 if "sample_path" not in st.session_state: st.session_state.sample_path = None
-uploaded = st.file_uploader("Upload leaf image", type=["jpg", "jpeg", "png", "webp"])
-
-with st.expander("Sample images"):
-    samples = sorted(SAMPLES_DIR.iterdir()) if SAMPLES_DIR.exists() else []
-    for p in samples:
-        if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"} and st.button(p.stem, key=f"s_{p.name}"):
-            st.session_state.sample_path = str(p); st.rerun()
+c_up, c_samp = st.columns([2, 1])
+with c_up: uploaded = st.file_uploader("Upload", type=["jpg", "jpeg", "png", "webp"], label_visibility="collapsed")
+with c_samp:
+    samples = sorted([p for p in SAMPLES_DIR.iterdir() if p.suffix.lower() in {".jpg", ".jpeg", ".png", ".webp"}]) if SAMPLES_DIR.exists() else []
+    if samples:
+        choice = st.selectbox("Sample", ["None"] + [p.name for p in samples], label_visibility="collapsed")
+        if choice != "None": st.session_state.sample_path = str(SAMPLES_DIR / choice)
 
 image = Image.open(uploaded) if uploaded else (Image.open(st.session_state.sample_path) if st.session_state.sample_path else None)
-source_name = uploaded.name if uploaded else (f"Sample: {Path(st.session_state.sample_path).name}" if st.session_state.sample_path else None)
+source_name = uploaded.name if uploaded else (Path(st.session_state.sample_path).name if st.session_state.sample_path else None)
 
-if not image: st.info("Please upload an image or select a sample to begin."); st.stop()
+if not image: st.info("Awaiting input image tensor..."); st.stop()
 
-with st.spinner("Analyzing..."): results, latency_ms = timed_predict(model, image, k=3)
-pred_class, top_conf = results[0]
-treatment = get_treatment(pred_class)
+results, latency_ms = run_inference(image, k=5)
+top_class, top_conf, top_logit = results[0]
 
-with st.container(border=True):
-    c1, c2, c3 = st.columns([2, 1, 1])
-    c1.markdown(f"**Prediction:** {pred_class}")
-    c2.markdown(f"**Confidence:** {top_conf:.2f}%")
-    c3.markdown(f"**Latency:** {latency_ms:.1f} ms")
-    st.markdown(f"**Severity:** {treatment['severity']}")
-    if "healthy" not in pred_class.lower() and top_conf < LOW_CONFIDENCE_THRESHOLD:
-        st.warning("Low confidence prediction.")
+c_img, c_res = st.columns([1, 1.4], gap="large")
+with c_img:
+    st.markdown('<div class="glass">', unsafe_allow_html=True)
+    st.image(image, use_container_width=True)
+    st.caption(f"`{source_name}` ({image.width}x{image.height}px)")
+    st.markdown('</div>', unsafe_allow_html=True)
 
-img_col, prob_col = st.columns([1, 1.3], gap="large")
-with img_col:
-    with st.container(border=True):
-        st.image(image, caption=source_name, use_container_width=True)
-with prob_col:
-    with st.container(border=True):
-        st.markdown("**Top-3 Predictions**")
-        st.dataframe(pd.DataFrame(results, columns=["Class", "Confidence"]), hide_index=True, use_container_width=True, column_config={"Confidence": st.column_config.ProgressColumn(format="%.1f%%", min_value=0, max_value=100)})
-
-with st.container(border=True):
-    st.markdown("**Remediation Guide**")
-    st.write(treatment["about"])
-    for tab, key in zip(st.tabs(["Chemical", "Organic", "Prevention"]), ("chemical", "organic", "prevention")):
-        with tab:
-            for step in treatment[key]: st.markdown(f"- {step}")
-
-report = f"REPORT\nGenerated: {datetime.now():%Y-%m-%d %H:%M}\nImage: {source_name}\nPrediction: {pred_class} ({top_conf:.1f}%)\nLatency: {latency_ms:.1f}ms\n\nTop-3:\n" + "\n".join([f"- {l}: {c:.1f}%" for l, c in results])
-st.download_button("Download Report", report, file_name="report.txt")
+with c_res:
+    st.markdown('<div class="glass">', unsafe_allow_html=True)
+    st.markdown(f"### `{top_class}`")
+    st.caption(f"Conf: **{top_conf:.2f}%** | Logit: **{top_logit:.3f}** | Latency: **{latency_ms:.1f}ms**")
+    st.divider()
+    st.markdown("**Top-5 Probability Distribution**")
+    df = pd.DataFrame(results, columns=["Class Label", "Probability (%)", "Logit"])
+    df["Probability (%)"] = df["Probability (%)"].map(lambda v: f"{v:.2f}%")
+    df["Logit"] = df["Logit"].map(lambda v: f"{v:.3f}")
+    st.dataframe(df, hide_index=True, use_container_width=True)
+    log_txt = f"timestamp: {datetime.now().isoformat()}\nfile: {source_name}\nlatency_ms: {latency_ms:.2f}\n\n" + "\n".join([f"{c:<30} {p:>6.2f}%" for c, p, _ in results])
+    st.download_button("Export Telemetry Log", log_txt, file_name="telemetry.txt")
+    st.markdown('</div>', unsafe_allow_html=True)
